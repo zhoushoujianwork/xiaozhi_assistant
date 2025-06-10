@@ -43,6 +43,7 @@ typedef struct {
     int root_y;
     int key;
     lv_indev_state_t state;
+    int screen_rotate;
 } lv_evdev_t;
 
 /**********************
@@ -100,7 +101,10 @@ static lv_point_t _evdev_process_pointer(lv_indev_t * indev, int x, int y)
     int height = lv_display_get_vertical_resolution(disp);
 
     int swapped_x = dsc->swap_axes ? y : x;
-    int swapped_y = dsc->swap_axes ? (height-x) : y;
+    int swapped_y = dsc->swap_axes ? x : y;
+    if(dsc->screen_rotate == 270){
+        swapped_y = dsc->swap_axes ? (height-x) : y;
+    }
 
     lv_point_t p;
     p.x = swapped_x;
@@ -170,7 +174,7 @@ static void _evdev_read(lv_indev_t * indev, lv_indev_data_t * data)
  *   GLOBAL FUNCTIONS
  **********************/
 
-lv_indev_t * lv_evdev_create(lv_indev_type_t indev_type, const char * dev_path, int width, int height)
+lv_indev_t * lv_evdev_create(lv_indev_type_t indev_type, const char * dev_path, int width, int height, int screen_rotate)
 {
     lv_evdev_t * dsc = lv_malloc_zeroed(sizeof(lv_evdev_t));
     LV_ASSERT_MALLOC(dsc);
@@ -209,6 +213,7 @@ lv_indev_t * lv_evdev_create(lv_indev_type_t indev_type, const char * dev_path, 
         dsc->max_x = width-1;
         dsc->min_y = 0;
         dsc->max_y = height-1;
+        dsc->screen_rotate = screen_rotate;
     }
     lv_indev_t * indev = lv_indev_create();
     if(indev == NULL) goto err_after_open;

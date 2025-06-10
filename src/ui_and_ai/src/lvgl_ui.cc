@@ -45,7 +45,7 @@ extern struct display* display;
 
 #define SCREEN_WIDTH 480
 #define SCREEN_HEIGHT 800
-#define SCREEN_ROTATE true
+#define SCREEN_ROTATE 270 //90
 
 static const char * getenv_default(const char *name, const char *dflt)
 {
@@ -62,7 +62,7 @@ static void lv_linux_disp_init(struct display* display)
     //std::cout << "lv_linux_disp_init plane: " << plane->plane_id << std::endl;
     lv_linux_drm_init(disp, display->fd, display->conn_id, display->crtc_id, plane->plane_id, display->blob_id);
 
-    lv_indev_t * touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0", SCREEN_WIDTH, SCREEN_HEIGHT);
+    lv_indev_t * touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0", SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_ROTATE);
     lv_evdev_set_swap_axes(touch, true);
     lv_indev_set_display(touch, disp);
 }

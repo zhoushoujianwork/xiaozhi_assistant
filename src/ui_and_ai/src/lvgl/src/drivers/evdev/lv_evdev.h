@@ -28,7 +28,7 @@ extern "C" {
  * @param dev_path device path, e.g., /dev/input/event0
  * @return pointer to input device or NULL if opening failed
  */
-lv_indev_t * lv_evdev_create(lv_indev_type_t indev_type, const char * dev_path, int width, int height);
+lv_indev_t * lv_evdev_create(lv_indev_type_t indev_type, const char * dev_path, int width, int height, int screen_rotate);
 
 /**
  * Set whether coordinates of pointer device should be swapped. Defaults to
