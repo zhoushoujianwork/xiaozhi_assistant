@@ -38,6 +38,9 @@ namespace asio = websocketpp::lib::asio;
 using namespace std;
 using json = nlohmann::json;
 static int g_enable_debug = 0;
+static int g_tts_retry_count = 0;
+static const int g_tts_max_retry_count = 3;
+static const int g_tts_retry_delay_ms = 3000;
 
 typedef websocketpp::client<websocketpp::config::asio_tls_client> client;
 typedef websocketpp::lib::shared_ptr<websocketpp::lib::asio::ssl::context> context_ptr;
@@ -235,9 +238,22 @@ static string get_auth_str() {
 }
 
 static context_ptr on_tls_init() {
-    context_ptr ctx = websocketpp::lib::make_shared<websocketpp::lib::asio::ssl::context>(asio::ssl::context::tlsv12_client);
-    ctx->set_options(SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
-    ctx->set_verify_mode(asio::ssl::verify_none);
+    context_ptr ctx = websocketpp::lib::make_shared<websocketpp::lib::asio::ssl::context>(asio::ssl::context::sslv23);
+    
+    try {
+        ctx->set_options(SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION);
+        ctx->set_verify_mode(asio::ssl::verify_none);
+        
+        // 设置默认验证路径
+        ctx->set_default_verify_paths();
+        
+        // 设置SSL选项以提高兼容性
+        ctx->set_options(asio::ssl::context::default_workarounds);
+        
+    } catch (std::exception& e) {
+        std::cout << "TTS TLS初始化错误: " << e.what() << std::endl;
+    }
+    
     return ctx;
 }
 
@@ -289,153 +305,179 @@ int webtts_send_text(const char* text)
 {
     printf("webtts_send_text: %s\n", text);
     g_pcm_buffer_index = 0;
+    g_tts_retry_count = 0;
 
-    client c;
+    // 重试连接逻辑
+    while (g_tts_retry_count < g_tts_max_retry_count) {
+        client c;
 
-    // 开启基本日志记录（可选）
-    if (g_enable_debug)
-    {
-        c.set_access_channels(websocketpp::log::alevel::all);
-        c.set_error_channels(websocketpp::log::elevel::all);
-        c.clear_access_channels(websocketpp::log::alevel::frame_payload); // 避免打印二进制数据
-    }
-    else
-    {
-        c.clear_access_channels(websocketpp::log::alevel::frame_payload); // 避免打印二进制数据
-        c.set_access_channels(websocketpp::log::alevel::connect |
-            websocketpp::log::alevel::disconnect |
-            websocketpp::log::alevel::fail);
-    }
-
-    c.init_asio();
-    c.set_tls_init_handler(bind(&on_tls_init));
-
-    // 添加失败处理器
-    c.set_fail_handler([&](websocketpp::connection_hdl hdl) {
-        client::connection_ptr con = c.get_con_from_hdl(hdl);
-        std::string response_body = con->get_response_msg();
-        std::cout << "连接失败，原因: "
-                  << con->get_ec().message()
-                  << " (状态码: "
-                  << con->get_response_code()
-                  << ")"
-                  << ",message:"
-                  << response_body.c_str()
-                  << std::endl;
-    });
-
-    // 修改消息处理器以捕获更多信息
-    c.set_message_handler([&](websocketpp::connection_hdl hdl, client::message_ptr msg) {
-        if (msg->get_opcode() == websocketpp::frame::opcode::text) {
-            try {
-                json response = json::parse(msg->get_payload());
-                if (response.contains("data") && response["data"].contains("audio")) {
-                    string encoded_audio = response["data"]["audio"].get<string>();
-                    string decoded_audio = base64_decode(encoded_audio);
-                    int status = response["data"]["status"].get<int>();
-
-                    _encode_pcm_data(decoded_audio.data(), decoded_audio.size(),status == 2);
-                }
-            } catch (const json::parse_error& e) {
-                std::cerr << "JSON 解析错误: " << e.what() << std::endl;
-            }
+        // 开启基本日志记录（可选）
+        if (g_enable_debug)
+        {
+            c.set_access_channels(websocketpp::log::alevel::all);
+            c.set_error_channels(websocketpp::log::elevel::all);
+            c.clear_access_channels(websocketpp::log::alevel::frame_payload); // 避免打印二进制数据
         }
-    });
-
-    websocketpp::lib::error_code ec;
-
-    string date_str = get_rfc1123_time();
-    string auth_str = get_auth_str();
-
-    // 对参数进行 URL 编码
-    string encoded_host = url_encode(HOST);
-    string encoded_date = url_encode(date_str);
-    string encoded_auth = url_encode(auth_str);
-
-    if (g_enable_debug)
-    {
-        std::cout << "生成日期头: " << date_str << std::endl;
-        std::cout << "授权头原始值: " << auth_str << std::endl;
-    }
-
-    // 构建带参数的请求 URL
-    string surl = "wss://" + HOST + PATH + "?host=" + encoded_host + "&date=" + encoded_date + "&authorization=" + encoded_auth;
-
-    // 打印连接信息
-    if (g_enable_debug)
-        std::cout << "正在连接至: " << surl << std::endl;
-
-    client::connection_ptr con = c.get_connection(surl, ec);
-
-    if (ec) {
-        std::cerr << "创建连接对象失败: " << ec.message() << std::endl;
-        return -1;
-    }
-
-    // 添加详细握手日志
-    con->set_http_handler([&](websocketpp::connection_hdl hdl) {
-        client::connection_ptr con = c.get_con_from_hdl(hdl);
-
-    // 新版本 WebSocket++ 获取请求头的方式
-    if (g_enable_debug)
-    {
-        auto const &headers = con->get_request().get_headers();
-        for (auto const &header : headers) {
-            std::cout << header.first << ": " << header.second << "\n";
+        else
+        {
+            c.clear_access_channels(websocketpp::log::alevel::frame_payload); // 避免打印二进制数据
+            c.set_access_channels(websocketpp::log::alevel::connect |
+                websocketpp::log::alevel::disconnect |
+                websocketpp::log::alevel::fail);
         }
-        std::cout << std::endl;
-    }
 
-    });
+        c.init_asio();
+        c.set_tls_init_handler(bind(&on_tls_init));
 
-    c.connect(con);
+        // 设置连接超时
+        c.set_open_handshake_timeout(15000); // 15秒握手超时
+        c.set_close_handshake_timeout(5000);  // 5秒关闭超时
 
-    // 在连接打开时发送请求（添加错误处理）
-    con->set_open_handler([&](websocketpp::connection_hdl hdl) {
-        try {
+        // 添加失败处理器
+        c.set_fail_handler([&](websocketpp::connection_hdl hdl) {
             client::connection_ptr con = c.get_con_from_hdl(hdl);
-            //std::cout << "连接成功，开始发送请求数据..." << std::endl;
+            std::string response_body = con->get_response_msg();
+            std::cout << "TTS连接失败，原因: "
+                      << con->get_ec().message()
+                      << " (状态码: "
+                      << con->get_response_code()
+                      << ")"
+                      << ",message:"
+                      << response_body.c_str()
+                      << std::endl;
+        });
 
-            // 保存 WebSocket 连接句柄
-            g_ws_connection_hdl = hdl;
-            g_ws_client = &c;
+        // 修改消息处理器以捕获更多信息
+        c.set_message_handler([&](websocketpp::connection_hdl hdl, client::message_ptr msg) {
+            if (msg->get_opcode() == websocketpp::frame::opcode::text) {
+                try {
+                    json response = json::parse(msg->get_payload());
+                    if (response.contains("data") && response["data"].contains("audio")) {
+                        string encoded_audio = response["data"]["audio"].get<string>();
+                        string decoded_audio = base64_decode(encoded_audio);
+                        int status = response["data"]["status"].get<int>();
 
-            // 打印请求数据
-            char audio_param[1024];
-            sprintf(audio_param,"audio/L16;rate=%d",g_webtts_config.sample_rate);
-            json request = {
-                {"common", {
-                    {"app_id", g_webtts_config.app_id.c_str()}
-                }},
-                {"business", {
-                    {"aue", "raw"},               // 输出格式
-                    {"auf", audio_param}, // 音频参数
-                    {"speed",g_webtts_config.speed},//语速
-                    {"vcn", g_webtts_config.voice_name.c_str()},           // 发音人
-                    {"tte", "UTF8"}               // 文本编码
-                }},
-                {"data", {
-                    {"text", base64_encode(text)}, // 文本需base64
-                    {"status", 2}                 // 固定值2表示结束
-                }}
-            };
-
-            if (g_enable_debug)
-                std::cout << "发送的请求JSON:\n" << request.dump(2) << std::endl;
-
-            c.send(hdl, request.dump(), websocketpp::frame::opcode::text, ec);
-            if (ec) {
-                std::cerr << "发送失败: " << ec.message() << std::endl;
+                        _encode_pcm_data(decoded_audio.data(), decoded_audio.size(),status == 2);
+                    }
+                } catch (const json::parse_error& e) {
+                    std::cerr << "JSON 解析错误: " << e.what() << std::endl;
+                }
             }
-        } catch (const std::exception &e) {
-            std::cerr << "打开连接异常: " << e.what() << std::endl;
-        }
-    });
+        });
 
-    try {
-        c.run();
-    } catch (const std::exception &e) {
-        std::cerr << "运行异常: " << e.what() << std::endl;
+        websocketpp::lib::error_code ec;
+
+        string date_str = get_rfc1123_time();
+        string auth_str = get_auth_str();
+
+        // 对参数进行 URL 编码
+        string encoded_host = url_encode(HOST);
+        string encoded_date = url_encode(date_str);
+        string encoded_auth = url_encode(auth_str);
+
+        if (g_enable_debug)
+        {
+            std::cout << "生成日期头: " << date_str << std::endl;
+            std::cout << "授权头原始值: " << auth_str << std::endl;
+        }
+
+        // 构建带参数的请求 URL
+        string surl = "wss://" + HOST + PATH + "?host=" + encoded_host + "&date=" + encoded_date + "&authorization=" + encoded_auth;
+
+        // 打印连接信息
+        if (g_enable_debug)
+            std::cout << "正在连接至: " << surl << " (尝试 " << (g_tts_retry_count + 1) << "/" << g_tts_max_retry_count << ")" << std::endl;
+
+        client::connection_ptr con = c.get_connection(surl, ec);
+
+        if (ec) {
+            std::cerr << "创建连接对象失败: " << ec.message() << std::endl;
+            g_tts_retry_count++;
+            if (g_tts_retry_count < g_tts_max_retry_count) {
+                std::cout << "TTS连接失败，等待 " << g_tts_retry_delay_ms << "ms 后重试..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(g_tts_retry_delay_ms));
+                continue;
+            } else {
+                std::cout << "TTS达到最大重试次数，连接失败" << std::endl;
+                return -1;
+            }
+        }
+
+        // 添加详细握手日志
+        con->set_http_handler([&](websocketpp::connection_hdl hdl) {
+            client::connection_ptr con = c.get_con_from_hdl(hdl);
+
+        // 新版本 WebSocket++ 获取请求头的方式
+        if (g_enable_debug)
+        {
+            auto const &headers = con->get_request().get_headers();
+            for (auto const &header : headers) {
+                std::cout << header.first << ": " << header.second << "\n";
+            }
+            std::cout << std::endl;
+        }
+
+        });
+
+        c.connect(con);
+
+        // 在连接打开时发送请求（添加错误处理）
+        con->set_open_handler([&](websocketpp::connection_hdl hdl) {
+            try {
+                client::connection_ptr con = c.get_con_from_hdl(hdl);
+                //std::cout << "连接成功，开始发送请求数据..." << std::endl;
+
+                // 保存 WebSocket 连接句柄
+                g_ws_connection_hdl = hdl;
+                g_ws_client = &c;
+
+                // 打印请求数据
+                char audio_param[1024];
+                sprintf(audio_param,"audio/L16;rate=%d",g_webtts_config.sample_rate);
+                json request = {
+                    {"common", {
+                        {"app_id", g_webtts_config.app_id.c_str()}
+                    }},
+                    {"business", {
+                        {"aue", "raw"},               // 输出格式
+                        {"auf", audio_param}, // 音频参数
+                        {"speed",g_webtts_config.speed},//语速
+                        {"vcn", g_webtts_config.voice_name.c_str()},           // 发音人
+                        {"tte", "UTF8"}               // 文本编码
+                    }},
+                    {"data", {
+                        {"text", base64_encode(text)}, // 文本需base64
+                        {"status", 2}                 // 固定值2表示结束
+                    }}
+                };
+
+                if (g_enable_debug)
+                    std::cout << "发送的请求JSON:\n" << request.dump(2) << std::endl;
+
+                c.send(hdl, request.dump(), websocketpp::frame::opcode::text, ec);
+                if (ec) {
+                    std::cerr << "发送失败: " << ec.message() << std::endl;
+                }
+            } catch (const std::exception &e) {
+                std::cerr << "打开连接异常: " << e.what() << std::endl;
+            }
+        });
+
+        try {
+            c.run();
+            // 如果运行成功，跳出重试循环
+            break;
+        } catch (const std::exception &e) {
+            std::cerr << "TTS运行异常: " << e.what() << std::endl;
+            g_tts_retry_count++;
+            if (g_tts_retry_count < g_tts_max_retry_count) {
+                std::cout << "TTS运行异常，等待 " << g_tts_retry_delay_ms << "ms 后重试..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(g_tts_retry_delay_ms));
+            } else {
+                std::cout << "TTS达到最大重试次数，运行失败" << std::endl;
+                return -1;
+            }
+        }
     }
 
     return 0;

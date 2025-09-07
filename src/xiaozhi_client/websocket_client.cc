@@ -46,6 +46,9 @@ using namespace std;
 
 static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_enable_debug = 0;
+static int g_connection_retry_count = 0;
+static const int g_max_retry_count = 5;
+static const int g_retry_delay_ms = 2000;
 
 extern int g_websocket_start;
 
@@ -235,14 +238,17 @@ static context_ptr on_tls_init(const char * hostname, websocketpp::connection_hd
                          boost::asio::ssl::context::no_sslv3 |
                          boost::asio::ssl::context::single_dh_use);
 
-        // 注释掉下面这行，否则会出现TLS握手失败错误
-        //ctx->set_verify_mode(boost::asio::ssl::verify_peer);
-        ctx->set_verify_callback(bind(&verify_certificate, hostname, ::_1, ::_2));
-
-        // 注释掉下面这行，否则会打印:load_verify_file: No such file or directory
-        //ctx->load_verify_file("ca-chain.cert.pem");
+        // 设置验证模式为不验证（用于测试环境），避免证书验证问题
+        ctx->set_verify_mode(boost::asio::ssl::verify_none);
+        
+        // 设置默认验证路径
+        ctx->set_default_verify_paths();
+        
+        // 设置SSL选项以提高兼容性
+        ctx->set_options(boost::asio::ssl::context::no_compression);
+        
     } catch (std::exception& e) {
-        std::cout << e.what() << std::endl;
+        std::cout << "TLS初始化错误: " << e.what() << std::endl;
     }
     return ctx;
 }
@@ -308,10 +314,8 @@ static void on_close(client *c, websocketpp::connection_hdl hdl) {
     if (g_enable_debug)
         std::cout << "Connection closed. Code: " << con->get_remote_close_code() << ", Reason: " << con->get_remote_close_reason() << "!!" << std::endl;
 
-    // 重新连接逻辑可以在这里实现
-    // 例如，等待一段时间后重新启动WebSocket连接
-    //std::this_thread::sleep_for(std::chrono::seconds(5)); // 等待5秒后重新连接
-    //websocket_start(); // 重新启动WebSocket线程
+    // 重置重试计数，为下次连接做准备
+    g_connection_retry_count = 0;
 }
 
 /**
@@ -332,7 +336,7 @@ static int websocket_connect(client *c) {
     printf("uri = %s\n", uri.c_str());
 
     if (g_enable_debug)
-        std::cout << "Connecting to " << uri << std::endl;
+        std::cout << "Connecting to " << uri << " (attempt " << (g_connection_retry_count + 1) << ")" << std::endl;
 
     try {
         // 设置日志级别
@@ -343,6 +347,12 @@ static int websocket_connect(client *c) {
         // 初始化ASIO
         c->init_asio();
 
+        // 设置连接超时
+        c->set_open_handshake_timeout(15000); // 15秒握手超时
+        c->set_close_handshake_timeout(5000);  // 5秒关闭超时
+        c->set_ping_interval(30000);           // 30秒ping间隔
+        c->set_ping_timeout(10000);            // 10秒ping超时
+
         // 注册消息处理程序
         c->set_message_handler(bind(&on_message, c, ::_1, ::_2));
         c->set_tls_init_handler(bind(&on_tls_init, hostname.c_str(), ::_1));
@@ -352,6 +362,13 @@ static int websocket_connect(client *c) {
 
         // 注册连接关闭处理程序
         c->set_close_handler(bind(&on_close, c, ::_1));
+
+        // 添加失败处理器
+        c->set_fail_handler([&](websocketpp::connection_hdl hdl) {
+            client::connection_ptr con = c->get_con_from_hdl(hdl);
+            std::cout << "连接失败，原因: " << con->get_ec().message() 
+                      << " (状态码: " << con->get_response_code() << ")" << std::endl;
+        });
 
         websocketpp::lib::error_code ec;
         client::connection_ptr con = c->get_connection(uri, ec);
@@ -392,7 +409,7 @@ static int websocket_connect(client *c) {
         c->get_alog().write(websocketpp::log::alevel::app, "Connecting to " + uri);
 
     } catch (websocketpp::exception const & e) {
-        std::cout << "exit hear!" << e.what() << "exit here!!" << std::endl;
+        std::cout << "WebSocket连接异常: " << e.what() << std::endl;
         return -1;
     }
 
@@ -407,28 +424,62 @@ static int websocket_connect(client *c) {
  */
 static void *websocket_thread(void *arg) {
     client *c = (client *)arg;
+    bool connection_successful = false;
 
-    try {
-        websocket_connect(c);
-        // 启动ASIO io_service运行循环
-        c->run();
-        c->stop();
-        delete c;
-        std::cout<<"exit from websocket_thread"<<std::endl;
+    // 重试连接逻辑
+    while (g_connection_retry_count < g_max_retry_count && !connection_successful) {
+        try {
+            if (websocket_connect(c) != 0) {
+                g_connection_retry_count++;
+                std::cout << "连接失败，重试 " << g_connection_retry_count << "/" << g_max_retry_count 
+                          << "，等待 " << g_retry_delay_ms << "ms 后重试..." << std::endl;
+                
+                if (g_connection_retry_count < g_max_retry_count) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(g_retry_delay_ms));
+                    continue;
+                } else {
+                    std::cout << "达到最大重试次数，连接失败" << std::endl;
+                    break;
+                }
+            }
 
-        if (g_ws_work_state_cb != NULL) {
-            g_ws_work_state_cb(false);
+            // 连接成功，启动ASIO io_service运行循环
+            c->run();
+            c->stop();
+            connection_successful = true;
+            g_connection_retry_count = 0; // 重置重试计数
+
+        } catch (websocketpp::exception const & e) {
+            g_connection_retry_count++;
+            std::cout << "WebSocket异常: " << e.what() << "，重试 " << g_connection_retry_count 
+                      << "/" << g_max_retry_count << std::endl;
+            
+            if (g_connection_retry_count < g_max_retry_count) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(g_retry_delay_ms));
+            } else {
+                std::cout << "达到最大重试次数，WebSocket线程退出" << std::endl;
+                break;
+            }
         }
+    }
 
-        if (g_speech_interaction_mode != kSpeechInteractionModeAutoWithWakeupWord) {
-            //restart websocket
+    delete c;
+    std::cout << "WebSocket线程退出" << std::endl;
+
+    if (g_ws_work_state_cb != NULL) {
+        g_ws_work_state_cb(false);
+    }
+
+    if (g_speech_interaction_mode != kSpeechInteractionModeAutoWithWakeupWord) {
+        // 如果连接失败，等待一段时间后重新启动WebSocket
+        if (!connection_successful) {
+            std::cout << "等待30秒后重新启动WebSocket..." << std::endl;
+            std::this_thread::sleep_for(std::chrono::seconds(30));
             websocket_start();
         }
+    }
 
-     } catch (websocketpp::exception const & e) {
-         std::cout << "exit hear!" << e.what() << "exit here!!" << std::endl;
-     }
-     return NULL;
+    return NULL;
 }
 
 

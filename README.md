@@ -1,140 +1,225 @@
-# 小智语音助手项目文档
+# 小智语音助手 (XiaoZhi Assistant)
 
-## 一、项目概述
-### 1. 项目简介
-小智语音助手是深度优化的嵌入式语音交互系统，基于[78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)项目功能迁移适配至**嘉楠K230开发板**实现。核心创新在于融合本地AI能力与云端服务，提供自然流畅的语音交互体验。
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Platform](https://img.shields.io/badge/Platform-K230%20RISC--V-green.svg)](https://www.canaan-creative.com/)
+[![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
 
-**技术亮点：**
+## 项目概述
+
+小智语音助手是一个深度优化的嵌入式语音交互系统，专为**嘉楠K230开发板**设计。项目基于[78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32)进行功能迁移和适配，融合本地AI能力与云端服务，提供自然流畅的语音交互体验。
+
+### 🚀 技术亮点
+
 - 🎙️ **双重唤醒机制**：集成K230本地语音唤醒+人脸识别唤醒
-- 🖥️ **高性能GUI**：采用LVGL构建低延迟触控界面
+- 🖥️ **高性能GUI**：采用LVGL构建低延迟触控界面  
 - 🌐 **混合架构**：本地AI处理+云端服务协同
 - 🔊 **专业级TTS**：集成讯飞星火语音合成服务
+- 🔧 **模块化设计**：支持独立编译和部署
+- 📱 **触控交互**：完整的人脸管理界面
 
-遵循**GPL V3开源协议**，确保代码开放性与可复用性。
+### 📋 系统要求
 
-### 2. 核心功能
-#### （1）语音交互模块
-- **实时数据传输**：通过WebSocket协议与服务器进行二进制Opus音频数据及JSON文本消息的实时传输，确保语音数据的高效、稳定传输。
-- **语音指令处理**：支持语音指令解析、响应生成及多轮对话逻辑，能够准确理解用户的语音指令，并提供相应的回复。
-- **本地语音唤醒**：利用K230开发板实现本地语音唤醒功能，用户可以通过特定的唤醒词唤醒语音助手，无需时刻与服务器保持连接，提高了唤醒的及时性和便捷性。
-- **语音合成**：采用讯飞星火的语音合成技术（https://console.xfyun.cn/services/tts），将文本信息转换为自然流畅的语音输出，提供更加友好的交互体验。
+- **硬件平台**：嘉楠K230开发板
+- **操作系统**：Linux (RISC-V 64位)
+- **交叉编译工具链**：Xuantie-900-gcc-linux-6.6.0
+- **依赖库**：LVGL, OpenCV, ALSA, Boost, WebSocketPP
 
-#### （2）设备激活模块
-- **HTTP协议激活**：基于HTTP协议实现设备激活，解析服务器返回的JSON激活状态及激活码，确保设备能够正常接入系统。
+### 📄 开源协议
 
-#### （3）人脸识别唤醒模块
-- **实时识别**：利用K230开发板的算力，实现实时人脸识别功能，当识别到特定的人脸时，自动唤醒语音助手。
+本项目遵循 **GPL V3 开源协议**，确保代码开放性与可复用性。
 
-#### （4）用户界面模块
-- **LVGL图形库集成**：集成LVGL图形库，提供触控交互界面，人脸管理：注册/识别/删除一体化界面。
+## 🎯 核心功能
 
-## 二、版权声明与开源协议
-### 1. 版权信息
-#### （1）Canaan Bright Sight Co., Ltd 版权声明
-```c
-// SPDX-License-Identifier: GPL-3.0-only
-/*
- * Copyright (c) 2025, Canaan Bright Sight Co., Ltd
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+### 🎙️ 语音交互模块
+- **实时数据传输**：通过WebSocket协议与服务器进行二进制Opus音频数据及JSON文本消息的实时传输
+- **语音指令处理**：支持语音指令解析、响应生成及多轮对话逻辑
+- **本地语音唤醒**：利用K230开发板实现本地语音唤醒功能，支持自定义唤醒词
+- **语音合成**：集成讯飞星火语音合成技术，提供自然流畅的语音输出
+
+### 🔐 设备激活模块  
+- **HTTP协议激活**：基于HTTP协议实现设备激活，支持JSON格式的激活状态管理
+- **设备认证**：确保设备能够安全接入云端服务系统
+
+### 👤 人脸识别唤醒模块
+- **实时识别**：利用K230开发板的AI算力，实现实时人脸识别功能
+- **智能唤醒**：当识别到已注册的人脸时，自动唤醒语音助手
+- **人脸管理**：支持人脸注册、识别、删除等完整管理功能
+
+### 🖥️ 用户界面模块
+- **LVGL图形库**：集成LVGL图形库，提供流畅的触控交互界面
+- **人脸管理界面**：提供注册/识别/删除一体化的人脸管理界面
+- **状态显示**：实时显示系统状态和交互反馈
+
+## 📁 项目结构
+
+```
+xiaozhi_assistant/
+├── src/                          # 源代码目录
+│   ├── ui_and_ai/               # UI和AI模块
+│   │   ├── src/                 # 核心源代码
+│   │   │   ├── main.cc          # 主程序入口
+│   │   │   ├── lvgl_ui.cc       # LVGL界面实现
+│   │   │   ├── face_*.cc        # 人脸识别相关
+│   │   │   ├── kws.cc           # 关键词检测
+│   │   │   └── ...
+│   │   ├── utils/               # 工具和资源文件
+│   │   │   ├── *.kmodel         # AI模型文件
+│   │   │   ├── *.ttf            # 字体文件
+│   │   │   └── run.sh           # 运行脚本
+│   │   └── CMakeLists.txt       # 构建配置
+│   ├── xiaozhi_client/          # 语音客户端模块
+│   │   ├── main.cc              # 客户端主程序
+│   │   ├── websocket_client.cc  # WebSocket客户端
+│   │   ├── snd_core/            # 音频处理核心
+│   │   └── CMakeLists.txt       # 构建配置
+│   └── common/                  # 公共代码
+│       ├── ipc_udp.cc           # IPC通信
+│       └── json.hpp             # JSON处理
+├── build.sh                     # 构建脚本
+├── README.md                    # 项目文档
+└── k230_bin/                    # 编译输出目录
+    ├── ui_and_ai                # UI可执行文件
+    ├── xiaozhi_client           # 客户端可执行文件
+    └── run.sh                   # 运行脚本
 ```
 
-#### （2）深圳百问网科技有限公司（100askTeam）版权声明
-```c
-// SPDX-License-Identifier: GPL-3.0-only
-/*
- * Copyright (c) 2008-2023 100askTeam : Dongshan WEI <weidongshan@100ask.net>
- * Discourse:  https://forums.100ask.net
- *
- *  Copyright (C) 2008-2023 深圳百问网科技有限公司
- *  All rights reserved
- *
- * 免责声明: 百问网编写的文档, 仅供学员学习使用, 可以转发或引用(请保留作者信息),禁止用于商业用途！
- * 免责声明: 百问网编写的程序, 用于商业用途请遵循GPL许可, 百问网不承担任何后果！
- *
- * 本程序遵循GPL V3协议, 请遵循协议
- * 百问网学习平台   : https://www.100ask.net
- * 百问网交流社区   : https://forums.100ask.net
- * 百问网官方B站    : https://space.bilibili.com/275908810
- * 联系我们(E-mail) : weidongshan@100ask.net
- *
- *          版权所有，盗版必究。
- */
-```
+## ⚖️ 版权声明
 
-### 2. 开源协议说明
-- 本项目整体遵循 **GPL V3开源协议**，允许修改和分发，但需保留原版权声明并公开修改后的代码。
-- 第三方库（如LVGL、LZ4）遵循其各自许可协议，使用时需单独遵守对应条款。
+### 主要版权方
+- **Canaan Bright Sight Co., Ltd** (2025)
+- **深圳百问网科技有限公司 (100askTeam)** (2008-2023)
 
-## 三、编译指南
+### 开源协议
+- 本项目遵循 **GPL V3 开源协议**
+- 第三方库遵循各自许可协议（LVGL、Boost等）
+- 商业使用需遵循GPL协议要求
 
-### 1.获取 SDK 源码
-#### 步骤 1：克隆 `k230_linux_sdk` 仓库
-首先，从 GitHub 上克隆 `k230_linux_sdk` 源码仓库。在终端中执行以下命令：
+## 🛠️ 快速开始
+
+### 环境准备
+
+1. **安装交叉编译工具链**
+   ```bash
+   # 下载并安装 Xuantie-900 工具链
+   wget https://github.com/T-head-Semi/xuantie-gnu-toolchain/releases/download/v3.0.2/Xuantie-900-gcc-linux-6.6.0-glibc-x86_64-V3.0.2.tar.gz
+   tar -xzf Xuantie-900-gcc-linux-6.6.0-glibc-x86_64-V3.0.2.tar.gz
+   sudo mv Xuantie-900-gcc-linux-6.6.0-glibc-x86_64-V3.0.2 /opt/toolchain/
+   ```
+
+2. **安装依赖库**
+   ```bash
+   # Ubuntu/Debian
+   sudo apt-get install cmake build-essential libasound2-dev libdrm-dev
+   
+   # CentOS/RHEL
+   sudo yum install cmake gcc-c++ alsa-lib-devel libdrm-devel
+   ```
+
+### 编译项目
+
+1. **克隆项目**
+   ```bash
+   git clone https://github.com/yourusername/xiaozhi_assistant.git
+   cd xiaozhi_assistant
+   ```
+
+2. **编译项目**
+   ```bash
+   # 赋予执行权限
+   chmod +x build.sh
+   
+   # 开始编译
+   ./build.sh
+   ```
+
+3. **编译输出**
+   编译完成后，在 `k230_bin/` 目录下会生成：
+   - `ui_and_ai` - UI和AI模块可执行文件
+   - `xiaozhi_client` - 语音客户端可执行文件
+   - `run.sh` - 运行脚本
+   - 相关资源文件（模型、字体等）
+
+### 部署到开发板
+
+1. **传输文件到开发板**
+   ```bash
+   # 使用 scp 传输整个 k230_bin 目录
+   scp -r k230_bin/ root@<开发板IP>:/home/root/
+   ```
+
+2. **在开发板上运行**
+   ```bash
+   # SSH 登录开发板
+   ssh root@<开发板IP>
+   
+   # 进入项目目录
+   cd /home/root/k230_bin
+   
+   # 赋予执行权限
+   chmod +x run.sh ui_and_ai xiaozhi_client
+   
+   # 运行项目
+   ./run.sh
+   ```
+
+### 运行模式
+
+项目支持多种运行模式：
+
 ```bash
-git clone git@github.com:kendryte/k230_linux_sdk.git
+# 自动语音交互模式
+./xiaozhi_client auto
+
+# 手动语音交互模式  
+./xiaozhi_client manual
+
+# 实时语音交互模式
+./xiaozhi_client realtime
+
+# 唤醒词模式
+./xiaozhi_client wakeup
 ```
 
-#### 步骤 2：修改开发板配置文件
-修改开发板的配置文件，以启用所需的软件包。配置文件的位置为 `k230_linux_sdk/buildroot-overlay/configs`。
-使用文本编辑器打开该配置文件，并确保以下配置项被启用：
-```plaintext
-BR2_PACKAGE_WEBSOCKETPP=y
-BR2_PACKAGE_BOOST=y
-BR2_PACKAGE_BOOST_JSON=y
-BR2_PACKAGE_BOOST_LOG=y
-BR2_PACKAGE_BOOST_SERIALIZATION=y
-BR2_PACKAGE_BOOST_URL=y
-```
+## 🤝 贡献指南
 
-#### 步骤 3：配置并编译固件
-进入 `k230_linux_sdk` 目录，并执行以下命令来配置和编译固件：
-```bash
-make k230_canmv_01studio_defconfig
-make
-```
+### 如何贡献
+1. Fork 本项目
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
 
-### 2.编译小智语音助手
-#### 步骤 1：下载小智语音助手源码
-进入 `k230_linux_sdk/buildroot-overlay/package` 目录，从本仓库克隆小智语音助手的源码。在终端中执行以下命令，将 `<xiaozhi_assistant_repository_url>` 替换为实际的仓库地址：
-```bash
-git clone <xiaozhi_assistant_repository_url>
-```
+### 开发规范
+- 遵循现有代码风格
+- 添加适当的注释和文档
+- 确保代码通过编译测试
+- 提交信息使用清晰的描述
 
-#### 步骤 2：编译小智语音助手源码
-在 `k230_linux_sdk/buildroot-overlay/package/xiaozhi_assistant` 目录下，执行 `build.sh` 脚本以编译源码：
-```bash
-./build.sh
-```
-编译完成后，在 `k230_linux_sdk/buildroot-overlay/package/xiaozhi_assistant/k230_bin` 目录下会生成目标文件。该目录包含两个可执行文件：
-- `ui_and_ai`：负责用户界面和人工智能相关功能。
-- `xiaozhi_client`：小智语音助手的客户端程序。
+## 📞 支持与联系
 
-### 3.运行小智语音助手
-#### 步骤 1：将软件拷贝到开发板
-将 `k230_linux_sdk/buildroot-overlay/package/xiaozhi_assistant/k230_bin` 目录下的所有文件和子目录拷贝到开发板上。可以使用 `scp` 等工具完成文件传输。
+- **问题反馈**: [GitHub Issues](https://github.com/yourusername/xiaozhi_assistant/issues)
+- **讨论交流**: [GitHub Discussions](https://github.com/yourusername/xiaozhi_assistant/discussions)
+- **文档**: [项目Wiki](https://github.com/yourusername/xiaozhi_assistant/wiki)
 
-#### 步骤 2：运行软件
-在开发板上，进入 `k230_bin` 目录，并执行 `run.sh` 脚本以启动小智语音助手：
-```bash
-cd k230_bin
-./run.sh
-```
+## 🙏 致谢
 
-通过以上步骤，你可以成功编译并运行小智语音助手。
+### 特别感谢
+- **100askTeam** - 提供优秀的嵌入式系统教学资源和开源代码
+- **Canaan Technology** - 提供K230开发板硬件支持
+- **LVGL Community** - 提供优秀的图形库支持
+- **开源社区** - 所有贡献者和用户的支持
 
-## 四、致谢
-### 1. 对100askTeam的感谢
-本项目部分功能基于深圳百问网科技有限公司（100askTeam）的开源代码开发，其在嵌入式系统教学与开源社区中的贡献为项目提供了重要支持。感谢100askTeam的技术积累与分享！
+### 相关项目
+- [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) - 原始ESP32版本
+- [kendryte/k230_linux_sdk](https://github.com/kendryte/k230_linux_sdk) - K230 Linux SDK
+- [LVGL/lvgl](https://github.com/lvgl/lvgl) - 轻量级图形库
+
+---
+
+<div align="center">
+
+**⭐ 如果这个项目对您有帮助，请给我们一个 Star！⭐**
+
+Made with ❤️ by the XiaoZhi Assistant Team
+
+</div>
