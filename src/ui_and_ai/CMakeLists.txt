@@ -34,6 +34,15 @@ add_subdirectory(src/lvgl)
 add_subdirectory(src/lv_100ask_xz_ai)
 
 
+# 触摸debug选项
+option(ENABLE_TOUCH_DEBUG "Enable touch debug output" ON)
+if(ENABLE_TOUCH_DEBUG)
+    add_definitions(-DTOUCH_DEBUG_ENABLED)
+    message(STATUS "Touch debug enabled")
+else()
+    message(STATUS "Touch debug disabled")
+endif()
+
 # 检查架构
 if (BR2_RISCV_32)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=rv32gcv_xtheadc")

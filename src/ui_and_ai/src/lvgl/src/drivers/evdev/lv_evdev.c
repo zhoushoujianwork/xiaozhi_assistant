@@ -129,17 +129,47 @@ static void _evdev_read(lv_indev_t * indev, lv_indev_data_t * data)
             else if(in.code == REL_Y) dsc->root_y += in.value;
         }
         else if(in.type == EV_ABS) {
-            if(in.code == ABS_X || in.code == ABS_MT_POSITION_X) dsc->root_x = in.value;
-            else if(in.code == ABS_Y || in.code == ABS_MT_POSITION_Y) dsc->root_y = in.value;
+            if(in.code == ABS_X || in.code == ABS_MT_POSITION_X) {
+                dsc->root_x = in.value;
+#ifdef TOUCH_DEBUG_ENABLED
+                LV_LOG_USER("[TOUCH_DEBUG] ABS_X: %d", in.value);
+#endif
+            }
+            else if(in.code == ABS_Y || in.code == ABS_MT_POSITION_Y) {
+                dsc->root_y = in.value;
+#ifdef TOUCH_DEBUG_ENABLED
+                LV_LOG_USER("[TOUCH_DEBUG] ABS_Y: %d", in.value);
+#endif
+            }
             else if(in.code == ABS_MT_TRACKING_ID) {
-                if(in.value == -1) dsc->state = LV_INDEV_STATE_RELEASED;
-                else if(in.value == 0) dsc->state = LV_INDEV_STATE_PRESSED;
+                if(in.value == -1) {
+                    dsc->state = LV_INDEV_STATE_RELEASED;
+#ifdef TOUCH_DEBUG_ENABLED
+                    LV_LOG_USER("[TOUCH_DEBUG] TOUCH_UP - Tracking ID: %d", in.value);
+#endif
+                }
+                else if(in.value == 0) {
+                    dsc->state = LV_INDEV_STATE_PRESSED;
+#ifdef TOUCH_DEBUG_ENABLED
+                    LV_LOG_USER("[TOUCH_DEBUG] TOUCH_DOWN - Tracking ID: %d", in.value);
+#endif
+                }
             }
         }
         else if(in.type == EV_KEY) {
             if(in.code == BTN_MOUSE || in.code == BTN_TOUCH) {
-                if(in.value == 0) dsc->state = LV_INDEV_STATE_RELEASED;
-                else if(in.value == 1) dsc->state = LV_INDEV_STATE_PRESSED;
+                if(in.value == 0) {
+                    dsc->state = LV_INDEV_STATE_RELEASED;
+#ifdef TOUCH_DEBUG_ENABLED
+                    LV_LOG_USER("[TOUCH_DEBUG] BTN_TOUCH UP");
+#endif
+                }
+                else if(in.value == 1) {
+                    dsc->state = LV_INDEV_STATE_PRESSED;
+#ifdef TOUCH_DEBUG_ENABLED
+                    LV_LOG_USER("[TOUCH_DEBUG] BTN_TOUCH DOWN");
+#endif
+                }
             }
             else {
                 dsc->key = _evdev_process_key(in.code);
@@ -164,6 +194,11 @@ static void _evdev_read(lv_indev_t * indev, lv_indev_data_t * data)
             //LV_LOG_USER("[_evdev_read]send event pointer %d, %d", dsc->root_x, dsc->root_y);
             data->state = dsc->state;
             data->point = _evdev_process_pointer(indev, dsc->root_x, dsc->root_y);
+#ifdef TOUCH_DEBUG_ENABLED
+            LV_LOG_USER("[TOUCH_DEBUG] POINTER EVENT - Raw: (%d, %d) -> Processed: (%d, %d) State: %s", 
+                       dsc->root_x, dsc->root_y, data->point.x, data->point.y,
+                       data->state == LV_INDEV_STATE_PRESSED ? "PRESSED" : "RELEASED");
+#endif
             break;
         default:
             break;

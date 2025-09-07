@@ -47,6 +47,38 @@ extern struct display* display;
 #define SCREEN_HEIGHT 800
 #define SCREEN_ROTATE 270 //90
 
+// 触摸事件回调函数
+static void touch_event_cb(lv_event_t * e)
+{
+#ifdef TOUCH_DEBUG_ENABLED
+    lv_obj_t * obj = lv_event_get_target(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    
+    switch(code) {
+        case LV_EVENT_PRESSED:
+            printf("[TOUCH_DEBUG] UI_EVENT: PRESSED at (%d, %d)\n", 
+                   lv_indev_get_act()->proc.types.pointer.act_point.x,
+                   lv_indev_get_act()->proc.types.pointer.act_point.y);
+            break;
+        case LV_EVENT_RELEASED:
+            printf("[TOUCH_DEBUG] UI_EVENT: RELEASED at (%d, %d)\n", 
+                   lv_indev_get_act()->proc.types.pointer.act_point.x,
+                   lv_indev_get_act()->proc.types.pointer.act_point.y);
+            break;
+        case LV_EVENT_PRESS_LOST:
+            printf("[TOUCH_DEBUG] UI_EVENT: PRESS_LOST\n");
+            break;
+        case LV_EVENT_CLICKED:
+            printf("[TOUCH_DEBUG] UI_EVENT: CLICKED at (%d, %d)\n", 
+                   lv_indev_get_act()->proc.types.pointer.act_point.x,
+                   lv_indev_get_act()->proc.types.pointer.act_point.y);
+            break;
+        default:
+            break;
+    }
+#endif
+}
+
 static const char * getenv_default(const char *name, const char *dflt)
 {
     return getenv(name) ? : dflt;
@@ -65,6 +97,12 @@ static void lv_linux_disp_init(struct display* display)
     lv_indev_t * touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0", SCREEN_WIDTH, SCREEN_HEIGHT, SCREEN_ROTATE);
     lv_evdev_set_swap_axes(touch, true);
     lv_indev_set_display(touch, disp);
+    
+    // 添加全局触摸事件监听
+    lv_obj_add_event_cb(lv_screen_active(), touch_event_cb, LV_EVENT_ALL, NULL);
+#ifdef TOUCH_DEBUG_ENABLED
+    printf("[TOUCH_DEBUG] Touch device initialized and event listener added\n");
+#endif
 }
 
 static void ui_proc(int device)
