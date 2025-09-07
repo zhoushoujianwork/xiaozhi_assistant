@@ -102,6 +102,10 @@ int kws_state=1;
 static std::mutex cur_state_mutex;
 static std::mutex display_state_mutex;
 
+// 显示状态监控
+static int last_display_state = -1;
+static int display_state_change_count = 0;
+
 // 帧计数结构体
 struct FaceInfo {
     std::string name;
@@ -170,6 +174,51 @@ void print_help() {
 }
 
 /**
+ * @brief 显示系统诊断函数
+ * 
+ * 检查显示系统的各个组件状态，帮助诊断摄像头画面不显示的问题
+ */
+void diagnose_display_system() {
+    std::cout << "\n======== 显示系统诊断 ========" << std::endl;
+    
+    // 检查显示对象
+    if (display) {
+        std::cout << "✓ 显示对象已初始化" << std::endl;
+        std::cout << "  - 分辨率: " << display->width << "x" << display->height << std::endl;
+        std::cout << "  - 文件描述符: " << display->fd << std::endl;
+        std::cout << "  - 连接器ID: " << display->conn_id << std::endl;
+        std::cout << "  - CRTC ID: " << display->crtc_id << std::endl;
+    } else {
+        std::cout << "✗ 显示对象未初始化" << std::endl;
+    }
+    
+    // 检查绘制缓冲区
+    if (draw_buffer) {
+        std::cout << "✓ 绘制缓冲区已分配" << std::endl;
+        std::cout << "  - 尺寸: " << draw_buffer->width << "x" << draw_buffer->height << std::endl;
+        std::cout << "  - 大小: " << draw_buffer->size << " 字节" << std::endl;
+        std::cout << "  - 内存映射: " << (draw_buffer->map ? "有效" : "无效") << std::endl;
+    } else {
+        std::cout << "✗ 绘制缓冲区未分配" << std::endl;
+    }
+    
+    // 检查状态
+    std::cout << "当前状态:" << std::endl;
+    std::cout << "  - AI状态: " << cur_state << std::endl;
+    std::cout << "  - 显示状态: " << display_state << std::endl;
+    std::cout << "  - 语音唤醒状态: " << kws_state << std::endl;
+    std::cout << "  - 显示状态变化次数: " << display_state_change_count << std::endl;
+    
+    // 检查线程状态
+    std::cout << "线程状态:" << std::endl;
+    std::cout << "  - 视频停止标志: " << (video_stop ? "是" : "否") << std::endl;
+    std::cout << "  - 音频停止标志: " << (audio_stop ? "是" : "否") << std::endl;
+    std::cout << "  - 显示停止标志: " << (display_stop ? "是" : "否") << std::endl;
+    
+    std::cout << "============================\n" << std::endl;
+}
+
+/**
  * @brief AI 推理主循环：处理 DMA Buffer 流，并根据状态执行人脸检测、识别、注册等操作
  *
  * @param argv           命令行参数数组（包含模型路径、阈值、数据库目录等）
@@ -186,20 +235,27 @@ void face_proc(char *argv[], int video_device) {
     // 配置摄像头参数
     v4l2_drm_default_context(&context);
     context.device       = video_device;
-    context.display      = false;
+    context.display      = false;  // AI线程不直接显示，只处理数据
     context.width        = SENSOR_WIDTH;
     context.height       = SENSOR_HEIGHT;
     context.video_format = v4l2_fourcc('B', 'G', '3', 'P'); // BGR planar
     context.buffer_num   = 3;
 
+    std::cout << "[AI_THREAD] 初始化摄像头参数: device=" << video_device 
+              << ", size=" << SENSOR_WIDTH << "x" << SENSOR_HEIGHT 
+              << ", format=BGR_PLANAR, buffers=" << context.buffer_num << std::endl;
+
     if (v4l2_drm_setup(&context, 1, NULL)) {
-        std::cerr << "v4l2_drm_setup error" << std::endl;
+        std::cerr << "[AI_THREAD] v4l2_drm_setup error" << std::endl;
         return;
     }
+    std::cout << "[AI_THREAD] v4l2_drm_setup 成功" << std::endl;
+    
     if (v4l2_drm_start(&context)) {
-        std::cerr << "v4l2_drm_start error" << std::endl;
+        std::cerr << "[AI_THREAD] v4l2_drm_start error" << std::endl;
         return;
     }
+    std::cout << "[AI_THREAD] v4l2_drm_start 成功，开始摄像头数据流" << std::endl;
 
     // 初始化模型与数据库参数
     char* kmodel_det   = argv[1];
@@ -227,11 +283,38 @@ void face_proc(char *argv[], int video_device) {
     SensorBufManager sensor_buf({SENSOR_CHANNEL, SENSOR_HEIGHT, SENSOR_WIDTH}, tensors);
 
     // 主处理循环
+    static int frame_count = 0;
     while (!video_stop) {
         int ret = v4l2_drm_dump(&context, 1000);
         if (ret) {
-            perror("v4l2_drm_dump error");
+            std::cerr << "[AI_THREAD] v4l2_drm_dump error: " << ret << std::endl;
             continue;
+        }
+        
+        frame_count++;
+        if (frame_count % 30 == 0) {  // 每30帧打印一次
+            std::cout << "[AI_THREAD] 处理第 " << frame_count << " 帧，buffer_index=" 
+                      << context.vbuffer.index << std::endl;
+        }
+        
+        // 检查摄像头数据是否有效
+        if (frame_count % 60 == 0) {  // 每60帧检查一次数据有效性
+            void* data = context.buffers[context.vbuffer.index].mmap;
+            if (data) {
+                // 检查数据是否全为0（可能表示摄像头无数据）
+                uint8_t* data_ptr = (uint8_t*)data;
+                bool all_zero = true;
+                for (int i = 0; i < 1000 && all_zero; i++) {  // 只检查前1000字节
+                    if (data_ptr[i] != 0) all_zero = false;
+                }
+                if (all_zero) {
+                    std::cout << "[AI_THREAD] 警告：摄像头数据可能无效（全零数据）" << std::endl;
+                } else {
+                    std::cout << "[AI_THREAD] 摄像头数据正常" << std::endl;
+                }
+            } else {
+                std::cout << "[AI_THREAD] 错误：摄像头缓冲区数据为空" << std::endl;
+            }
         }
         //---------------------------------- 状态处理分支 ----------------------------------
         std::lock_guard<std::mutex> lock(cur_state_mutex);
@@ -546,15 +629,25 @@ void kws_proc(char *argv[]){
 int frame_handler(struct v4l2_drm_context *context, bool displayed)
 {
     static bool first_frame = true;
+    static unsigned response = 0, display_frame_count = 0;
+    static int debug_frame_count = 0;
+    
     if (first_frame) {
         // 第一帧解锁互斥量，允许 AI 处理线程继续执行
+        std::cout << "[FRAME_HANDLER] 第一帧到达，解锁AI线程" << std::endl;
         result_mutex.unlock();
         first_frame = false;
     }
-    static unsigned response = 0, display_frame_count = 0;
+    
     response += 1;
+    debug_frame_count++;
+    
     if (displayed)
     {
+        if (debug_frame_count % 30 == 0) {  // 每30帧打印一次
+            std::cout << "[FRAME_HANDLER] 显示第 " << debug_frame_count << " 帧" << std::endl;
+        }
+        
         // 判断该帧的 buffer 是否被标记为持有可绘制数据
         if (context[0].buffer_hold[context[0].wp] >= 0)
         {
@@ -563,6 +656,10 @@ int frame_handler(struct v4l2_drm_context *context, bool displayed)
 
             // 如果是新的一帧（不是重复帧），才进行绘制
             if (buffer != last_drawed_buffer) {
+                if (debug_frame_count % 30 == 0) {
+                    std::cout << "[FRAME_HANDLER] 新帧数据，开始绘制，buffer_hold=" 
+                              << context[0].buffer_hold[context[0].wp] << std::endl;
+                }
                 // 创建临时 ARGB 显示缓冲（用于画图）
                 cv::Mat temp_img(draw_buffer->height, draw_buffer->width, CV_8UC4);
 
@@ -571,10 +668,24 @@ int frame_handler(struct v4l2_drm_context *context, bool displayed)
                 if (draw_buffer->width > draw_buffer->height)
                 {
                     std::lock_guard<std::mutex> lock(display_state_mutex);
+                    
+                    // 监控显示状态变化
+                    if (display_state != last_display_state) {
+                        std::cout << "[FRAME_HANDLER] 显示状态变化: " << last_display_state 
+                                  << " -> " << display_state << " (第" << ++display_state_change_count << "次变化)" << std::endl;
+                        last_display_state = display_state;
+                    }
+                    
+                    if (debug_frame_count % 30 == 0) {
+                        std::cout << "[FRAME_HANDLER] 横屏模式，显示状态=" << display_state << std::endl;
+                    }
                     // 正常显示人脸识别
                     if (display_state == 1) {
                         temp_img.setTo(cv::Scalar(0, 0, 0, 0));
                         result_mutex.lock();
+                        if (debug_frame_count % 30 == 0) {
+                            std::cout << "[FRAME_HANDLER] 绘制人脸识别结果，检测到 " << face_results.size() << " 个人脸" << std::endl;
+                        }
                         for (size_t i = 0; i < face_results.size(); i++) {
                             FaceRecognition::draw_result(temp_img, face_results[i].bbox, face_rec_results[i]);
                         }
@@ -637,11 +748,26 @@ int frame_handler(struct v4l2_drm_context *context, bool displayed)
                 }
                 //---------------------- 显示缓冲同步 ----------------------
                 // 将绘图图像复制到实际显示缓冲区
+                if (debug_frame_count % 30 == 0) {
+                    std::cout << "[FRAME_HANDLER] 复制图像到显示缓冲区，size=" << draw_buffer->size << std::endl;
+                }
                 memcpy(draw_buffer->map, temp_img.data, draw_buffer->size);
                 last_drawed_buffer = buffer;
                 // 刷新缓存，通知显示设备更新
                 thead_csi_dcache_clean_invalid_range(buffer->map, buffer->size);
                 display_update_buffer(draw_buffer, 0, 0);
+                if (debug_frame_count % 30 == 0) {
+                    std::cout << "[FRAME_HANDLER] 显示缓冲区更新完成" << std::endl;
+                }
+            } else {
+                if (debug_frame_count % 30 == 0) {
+                    std::cout << "[FRAME_HANDLER] 跳过重复帧绘制" << std::endl;
+                }
+            }
+        } else {
+            if (debug_frame_count % 30 == 0) {
+                std::cout << "[FRAME_HANDLER] 无可用显示缓冲区，buffer_hold=" 
+                          << context[0].buffer_hold[context[0].wp] << std::endl;
             }
         }
 
@@ -715,6 +841,10 @@ static void message_proc(int video_device){
             }
             else if(ui_message.cmd==7){
                 cur_state=7;
+            }
+            else if(ui_message.cmd==99){
+                // 诊断命令
+                diagnose_display_system();
             }else{
                 cur_state=-1;
             }
@@ -737,6 +867,9 @@ void display_proc(int video_device)
     v4l2_drm_default_context(&context);
     context.device = video_device;
 
+    std::cout << "[DISPLAY_THREAD] 开始初始化显示线程，device=" << video_device << std::endl;
+    std::cout << "[DISPLAY_THREAD] 显示分辨率: " << display->width << "x" << display->height << std::endl;
+
     // 根据屏幕方向设置 width/height/rotation
     if (display->width > display->height)
     {
@@ -746,6 +879,8 @@ void display_proc(int video_device)
         context.video_format = V4L2_PIX_FMT_NV12;
         context.display_format = 0;
         context.drm_rotation = rotation_0;
+        std::cout << "[DISPLAY_THREAD] 横屏模式: " << context.width << "x" << context.height 
+                  << ", rotation=0" << std::endl;
     }
     else
     {
@@ -755,25 +890,46 @@ void display_proc(int video_device)
         context.video_format = V4L2_PIX_FMT_NV12;
         context.display_format = 0;
         context.drm_rotation = rotation_90;
+        std::cout << "[DISPLAY_THREAD] 竖屏模式: " << context.width << "x" << context.height 
+                  << ", rotation=90" << std::endl;
     }
 
     // 初始化 V4L2 + DRM 流
+    std::cout << "[DISPLAY_THREAD] 开始v4l2_drm_setup..." << std::endl;
     if (v4l2_drm_setup(&context, 1, &display)) {
-        std::cerr << "v4l2_drm_setup error" << std::endl;
+        std::cerr << "[DISPLAY_THREAD] v4l2_drm_setup error" << std::endl;
         return;
     }
+    std::cout << "[DISPLAY_THREAD] v4l2_drm_setup 成功" << std::endl;
 
     // 分配OSD显示 plane 和 buffer
+    std::cout << "[DISPLAY_THREAD] 分配OSD显示缓冲区..." << std::endl;
     struct display_plane* plane = display_get_plane(display, DRM_FORMAT_ARGB8888);
+    if (!plane) {
+        std::cerr << "[DISPLAY_THREAD] display_get_plane 失败" << std::endl;
+        return;
+    }
+    std::cout << "[DISPLAY_THREAD] 获取到plane: " << plane->plane_id << std::endl;
+    
     draw_buffer = display_allocate_buffer(plane, display->width, display->height);
+    if (!draw_buffer) {
+        std::cerr << "[DISPLAY_THREAD] display_allocate_buffer 失败" << std::endl;
+        return;
+    }
+    std::cout << "[DISPLAY_THREAD] 分配显示缓冲区成功: " << draw_buffer->width 
+              << "x" << draw_buffer->height << ", size=" << draw_buffer->size << std::endl;
+    
     display_commit_buffer(draw_buffer, 0, 0);
+    std::cout << "[DISPLAY_THREAD] 提交初始显示缓冲区" << std::endl;
 
     if(fps_count){
         // 记录起始时间（用于 FPS 测试）
         gettimeofday(&tv, NULL);
+        std::cout << "[DISPLAY_THREAD] FPS计数已启用" << std::endl;
     }
 
     // 启动显示主循环，绑定回调 frame_handler
+    std::cout << "[DISPLAY_THREAD] 启动v4l2_drm_run主循环..." << std::endl;
     v4l2_drm_run(&context, 1, frame_handler);
 
     // 清理资源
@@ -836,8 +992,18 @@ int main(int argc, char *argv[])
     // 输入提示信息
     std::cout << "输入 'h' 或 'help' 并回车 查看命令说明" << std::endl;
 
+    // 定期诊断计数器
+    static int diagnostic_counter = 0;
+    
     while (true) {
         usleep(100000);
+        
+        // 每10秒进行一次诊断
+        diagnostic_counter++;
+        if (diagnostic_counter % 100 == 0) {  // 100 * 100ms = 10秒
+            std::cout << "\n[MAIN] 定期系统诊断 (运行时间: " << diagnostic_counter/10 << "秒)" << std::endl;
+            diagnose_display_system();
+        }
     }
     // 等待线程完成后退出程序
     display_thread.join();
